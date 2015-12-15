@@ -18,7 +18,6 @@ import com.jogamp.opengl.util.GLPixelBuffer.GLPixelAttributes;
  */
 public class TextureData {
 
-    private int flags;
     protected int target;
     protected int format;
     protected int[] dimensions;
@@ -37,9 +36,22 @@ public class TextureData {
     protected int maxFace;
     protected int baseLevel;
     protected int maxLevel;
+    private int layers;
+    private int faces;
+    private int levels;
     private int blockSize;
     private int[] blockCount;
     private short[] blockDimensions;
+
+    public TextureData() {
+        baseLevel = maxLevel = layers = 0;
+        baseFace = maxFace = faces = 0;
+        baseLevel = maxLevel = levels = 0;
+        blockSize = 0;
+        blockCount = new int[]{0, 0, 0};
+        blockDimensions = new short[]{0, 0, 0};
+        dimensions = new int[]{0, 0, 0};
+    }
 
     public TextureData(final int target,
             final int format,
@@ -52,8 +64,8 @@ public class TextureData {
             final int[] swizzles,
             final Buffer buffer,
             final Flusher flusher) throws IllegalArgumentException {
-        this(target, format, dimensions, layers, faces, levels, new GLPixelAttributes(pixelFormat, pixelType),
-                swizzles, buffer, flusher);
+        this(target, format, dimensions, layers, faces, levels,
+                new GLPixelAttributes(pixelFormat, pixelType), swizzles, buffer, flusher);
     }
 
     public TextureData(final int target,
@@ -72,15 +84,18 @@ public class TextureData {
         this.dimensions = dimensions;
         this.baseLayer = 0;
         this.maxLayer = layers - 1;
+        this.layers = layers;
         this.baseFace = 0;
         this.maxFace = faces - 1;
+        this.faces = faces;
         this.baseLevel = 0;
         this.maxLevel = levels - 1;
+        this.levels = levels;
         this.pixelAttributes = pixelAttributes;
         this.swizzles = swizzles;
         this.buffer = buffer;
         this.flusher = flusher;
-        
+
         alignment = 1;  // FIXME: is this correct enough in all situations?
         size = estimatedMemorySize(buffer);
     }

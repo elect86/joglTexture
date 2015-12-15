@@ -25,7 +25,7 @@
  * authors and should not be interpreted as representing official policies, either expressed
  * or implied, of JogAmp Community.
  */
-package com.jogamp.opengl.util.texture;
+package texture;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;
@@ -218,6 +218,7 @@ public class ImageType {
      * </ul>
      */
     public static final String T_DDS     = "dds";
+    public static final String T_KTX     = "ktx";
 
     /**
      * Constant which can be used as a file suffix to indicate a Portable Arbitrary Map stream, NetPbm magic 7 - binary RGB and RGBA.

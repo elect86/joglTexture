@@ -38,7 +38,7 @@
  * and developed by Kenneth Bradley Russell and Christopher John Kline.
  */
 
-package com.jogamp.opengl.util.texture;
+package texture;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -908,115 +908,6 @@ public class TextureIO {
             throw new IOException(ioe.getMessage()+", given URL "+url, ioe);
         } finally {
             stream.close();
-        }
-    }
-
-    //----------------------------------------------------------------------
-    // DDS image provider
-    static class DDSTextureProvider implements TextureProvider {
-        private static final ImageType[] imageTypes = new ImageType[] { new ImageType(ImageType.T_DDS) };
-        @Override
-        public final ImageType[] getImageTypes() {
-            return imageTypes;
-        }
-
-        @Override
-        public TextureData newTextureData(final GLProfile glp, final InputStream stream,
-                                          final int internalFormat,
-                                          final int pixelFormat,
-                                          final boolean mipmap,
-                                          final String fileSuffix) throws IOException {
-            if (ImageType.T_DDS.equals(fileSuffix) ||
-                ImageType.T_DDS.equals(ImageType.Util.getFileSuffix(stream))) {
-                final byte[] data = IOUtil.copyStream2ByteArray(stream);
-                final ByteBuffer buf = ByteBuffer.wrap(data);
-                final DDSImage image = DDSImage.read(buf);
-                return newTextureData(glp, image, internalFormat, pixelFormat, mipmap);
-            }
-
-            return null;
-        }
-
-        private TextureData newTextureData(final GLProfile glp, final DDSImage image,
-                                           int internalFormat,
-                                           int pixelFormat,
-                                           boolean mipmap) {
-            final DDSImage.ImageInfo info = image.getMipMap(0);
-            if (pixelFormat == 0) {
-                switch (image.getPixelFormat()) {
-                case DDSImage.D3DFMT_R8G8B8:
-                    pixelFormat = GL.GL_RGB;
-                    break;
-                default:
-                    pixelFormat = GL.GL_RGBA;
-                    break;
-                }
-            }
-            if (info.isCompressed()) {
-                switch (info.getCompressionFormat()) {
-                case DDSImage.D3DFMT_DXT1:
-                    internalFormat = GL.GL_COMPRESSED_RGB_S3TC_DXT1_EXT;
-                    break;
-                case DDSImage.D3DFMT_DXT3:
-                    internalFormat = GL.GL_COMPRESSED_RGBA_S3TC_DXT3_EXT;
-                    break;
-                case DDSImage.D3DFMT_DXT5:
-                    internalFormat = GL.GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
-                    break;
-                default:
-                    throw new RuntimeException("Unsupported DDS compression format \"" +
-                                               DDSImage.getCompressionFormatName(info.getCompressionFormat()) + "\"");
-                }
-            }
-            if (internalFormat == 0) {
-                switch (image.getPixelFormat()) {
-                case DDSImage.D3DFMT_R8G8B8:
-                    pixelFormat = GL.GL_RGB;
-                    break;
-                default:
-                    pixelFormat = GL.GL_RGBA;
-                    break;
-                }
-            }
-            final TextureData.Flusher flusher = new TextureData.Flusher() {
-                    @Override
-                    public void flush() {
-                        image.close();
-                    }
-                };
-            TextureData data;
-            if (mipmap && image.getNumMipMaps() > 0) {
-                final Buffer[] mipmapData = new Buffer[image.getNumMipMaps()];
-                for (int i = 0; i < image.getNumMipMaps(); i++) {
-                    mipmapData[i] = image.getMipMap(i).getData();
-                }
-                data = new TextureData(glp, internalFormat,
-                                       info.getWidth(),
-                                       info.getHeight(),
-                                       0,
-                                       pixelFormat,
-                                       GL.GL_UNSIGNED_BYTE,
-                                       info.isCompressed(),
-                                       true,
-                                       mipmapData,
-                                       flusher);
-            } else {
-                // Fix this up for the end user because we can't generate
-                // mipmaps for compressed textures
-                mipmap = false;
-                data = new TextureData(glp, internalFormat,
-                                       info.getWidth(),
-                                       info.getHeight(),
-                                       0,
-                                       pixelFormat,
-                                       GL.GL_UNSIGNED_BYTE,
-                                       mipmap,
-                                       info.isCompressed(),
-                                       true,
-                                       info.getData(),
-                                       flusher);
-            }
-            return data;
         }
     }
 

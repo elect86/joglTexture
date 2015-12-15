@@ -38,7 +38,7 @@
  * and developed by Kenneth Bradley Russell and Christopher John Kline.
  */
 
-package com.jogamp.opengl.util.texture.spi;
+package texture.spi;
 
 import java.io.IOException;
 import java.io.InputStream;

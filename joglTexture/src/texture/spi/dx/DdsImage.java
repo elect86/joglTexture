@@ -36,15 +36,12 @@
  * Sun gratefully acknowledges that this software was originally authored
  * and developed by Kenneth Bradley Russell and Christopher John Kline.
  */
+package texture.spi.dx;
 
-package com.jogamp.opengl.util.texture.spi;
-
-import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.PrintStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -53,20 +50,25 @@ import java.nio.channels.FileChannel;
 import com.jogamp.opengl.GL;
 import com.jogamp.common.nio.Buffers;
 import com.jogamp.common.util.IOUtil;
-import com.jogamp.opengl.util.texture.ImageType;
+import static com.jogamp.opengl.GL.GL_INVALID_VALUE;
+import static texture.spi.dx.D3dFormat.D3DFMT_DX10;
+import static texture.spi.dx.Ddpf.*;
 
-/** A reader and writer for DirectDraw Surface (.dds) files, which are
-    used to describe textures. These files can contain multiple mipmap
-    levels in one file. This class is currently minimal and does not
-    support all of the possible file formats. */
+/**
+ * A reader and writer for DirectDraw Surface (.dds) files, which are used to
+ * describe textures. These files can contain multiple mipmap levels in one
+ * file. This class is currently minimal and does not support all of the
+ * possible file formats.
+ */
+public class DdsImage {
 
-public class DDSImage {
-
-    /** Simple class describing images and data; does not encapsulate
-        image format information. User is responsible for transmitting
-        that information in another way. */
-
+    /**
+     * Simple class describing images and data; does not encapsulate image
+     * format information. User is responsible for transmitting that information
+     * in another way.
+     */
     public static class ImageInfo {
+
         private final ByteBuffer data;
         private final int width;
         private final int height;
@@ -74,128 +76,87 @@ public class DDSImage {
         private final int compressionFormat;
 
         public ImageInfo(final ByteBuffer data, final int width, final int height, final boolean compressed, final int compressionFormat) {
-            this.data = data; this.width = width; this.height = height;
-            this.isCompressed = compressed; this.compressionFormat = compressionFormat;
+            this.data = data;
+            this.width = width;
+            this.height = height;
+            this.isCompressed = compressed;
+            this.compressionFormat = compressionFormat;
         }
-        public int        getWidth()  { return width;  }
-        public int        getHeight() { return height; }
-        public ByteBuffer getData()   { return data;   }
-        public boolean    isCompressed() { return isCompressed; }
-        public int        getCompressionFormat() {
-            if (!isCompressed())
+
+        public int getWidth() {
+            return width;
+        }
+
+        public int getHeight() {
+            return height;
+        }
+
+        public ByteBuffer getData() {
+            return data;
+        }
+
+        public boolean isCompressed() {
+            return isCompressed;
+        }
+
+        public int getCompressionFormat() {
+            if (!isCompressed()) {
                 throw new RuntimeException("Should not call unless compressed");
+            }
             return compressionFormat;
         }
     }
 
     private FileInputStream fis;
-    private FileChannel     chan;
+    private FileChannel chan;
     private ByteBuffer buf;
-    private Header header;
+    private DdsHeader header;
+    private DdsHeader10 header10;
 
-    //
-    // Selected bits in header flags
-    //
-
-    public static final int DDSD_CAPS            = 0x00000001; // Capacities are valid
-    public static final int DDSD_HEIGHT          = 0x00000002; // Height is valid
-    public static final int DDSD_WIDTH           = 0x00000004; // Width is valid
-    public static final int DDSD_PITCH           = 0x00000008; // Pitch is valid
-    public static final int DDSD_BACKBUFFERCOUNT = 0x00000020; // Back buffer count is valid
-    public static final int DDSD_ZBUFFERBITDEPTH = 0x00000040; // Z-buffer bit depth is valid (shouldn't be used in DDSURFACEDESC2)
-    public static final int DDSD_ALPHABITDEPTH   = 0x00000080; // Alpha bit depth is valid
-    public static final int DDSD_LPSURFACE       = 0x00000800; // lpSurface is valid
-    public static final int DDSD_PIXELFORMAT     = 0x00001000; // ddpfPixelFormat is valid
-    public static final int DDSD_MIPMAPCOUNT     = 0x00020000; // Mip map count is valid
-    public static final int DDSD_LINEARSIZE      = 0x00080000; // dwLinearSize is valid
-    public static final int DDSD_DEPTH           = 0x00800000; // dwDepth is valid
-
-    public static final int DDPF_ALPHAPIXELS     = 0x00000001; // Alpha channel is present
-    public static final int DDPF_ALPHA           = 0x00000002; // Only contains alpha information
-    public static final int DDPF_FOURCC          = 0x00000004; // FourCC code is valid
-    public static final int DDPF_PALETTEINDEXED4 = 0x00000008; // Surface is 4-bit color indexed
-    public static final int DDPF_PALETTEINDEXEDTO8 = 0x00000010; // Surface is indexed into a palette which stores indices
-    // into the destination surface's 8-bit palette
-    public static final int DDPF_PALETTEINDEXED8 = 0x00000020; // Surface is 8-bit color indexed
-    public static final int DDPF_RGB             = 0x00000040; // RGB data is present
-    public static final int DDPF_COMPRESSED      = 0x00000080; // Surface will accept pixel data in the format specified
-    // and compress it during the write
-    public static final int DDPF_RGBTOYUV        = 0x00000100; // Surface will accept RGB data and translate it during
-    // the write to YUV data. The format of the data to be written
-    // will be contained in the pixel format structure. The DDPF_RGB
-    // flag will be set.
-    public static final int DDPF_YUV             = 0x00000200; // Pixel format is YUV - YUV data in pixel format struct is valid
-    public static final int DDPF_ZBUFFER         = 0x00000400; // Pixel format is a z buffer only surface
-    public static final int DDPF_PALETTEINDEXED1 = 0x00000800; // Surface is 1-bit color indexed
-    public static final int DDPF_PALETTEINDEXED2 = 0x00001000; // Surface is 2-bit color indexed
-    public static final int DDPF_ZPIXELS         = 0x00002000; // Surface contains Z information in the pixels
-
-    // Selected bits in DDS capabilities flags
-    public static final int DDSCAPS_TEXTURE      = 0x00001000; // Can be used as a texture
-    public static final int DDSCAPS_MIPMAP       = 0x00400000; // Is one level of a mip-map
-    public static final int DDSCAPS_COMPLEX      = 0x00000008; // Complex surface structure, such as a cube map
-
-    // Selected bits in DDS extended capabilities flags
-    public static final int DDSCAPS2_CUBEMAP           = 0x00000200;
-    public static final int DDSCAPS2_CUBEMAP_POSITIVEX = 0x00000400;
-    public static final int DDSCAPS2_CUBEMAP_NEGATIVEX = 0x00000800;
-    public static final int DDSCAPS2_CUBEMAP_POSITIVEY = 0x00001000;
-    public static final int DDSCAPS2_CUBEMAP_NEGATIVEY = 0x00002000;
-    public static final int DDSCAPS2_CUBEMAP_POSITIVEZ = 0x00004000;
-    public static final int DDSCAPS2_CUBEMAP_NEGATIVEZ = 0x00008000;
-
-    // Known pixel formats
-    public static final int D3DFMT_UNKNOWN   =  0;
-    public static final int D3DFMT_R8G8B8    =  20;
-    public static final int D3DFMT_A8R8G8B8  =  21;
-    public static final int D3DFMT_X8R8G8B8  =  22;
-    // The following are also valid FourCC codes
-    public static final int D3DFMT_DXT1      =  0x31545844;
-    public static final int D3DFMT_DXT2      =  0x32545844;
-    public static final int D3DFMT_DXT3      =  0x33545844;
-    public static final int D3DFMT_DXT4      =  0x34545844;
-    public static final int D3DFMT_DXT5      =  0x35545844;
-
-    /** Reads a DirectDraw surface from the specified file name,
-        returning the resulting DDSImage.
-
-        @param filename File name
-        @return DDS image object
-        @throws java.io.IOException if an I/O exception occurred
-    */
-    public static DDSImage read(final String filename) throws IOException {
+    /**
+     * Reads a DirectDraw surface from the specified file name, returning the
+     * resulting DDSImage.
+     *
+     * @param filename File name
+     * @return DDS image object
+     * @throws java.io.IOException if an I/O exception occurred
+     */
+    public static DdsImage read(final String filename) throws IOException {
         return read(new File(filename));
     }
 
-    /** Reads a DirectDraw surface from the specified file, returning
-        the resulting DDSImage.
-
-        @param file File object
-        @return DDS image object
-        @throws java.io.IOException if an I/O exception occurred
-    */
-    public static DDSImage read(final File file) throws IOException {
-        final DDSImage image = new DDSImage();
+    /**
+     * Reads a DirectDraw surface from the specified file, returning the
+     * resulting DDSImage.
+     *
+     * @param file File object
+     * @return DDS image object
+     * @throws java.io.IOException if an I/O exception occurred
+     */
+    public static DdsImage read(final File file) throws IOException {
+        final DdsImage image = new DdsImage();
         image.readFromFile(file);
         return image;
     }
 
-    /** Reads a DirectDraw surface from the specified ByteBuffer, returning
-        the resulting DDSImage.
-
-        @param buf Input data
-        @return DDS image object
-        @throws java.io.IOException if an I/O exception occurred
-    */
-    public static DDSImage read(final ByteBuffer buf) throws IOException {
-        final DDSImage image = new DDSImage();
+    /**
+     * Reads a DirectDraw surface from the specified ByteBuffer, returning the
+     * resulting DDSImage.
+     *
+     * @param buf Input data
+     * @return DDS image object
+     * @throws java.io.IOException if an I/O exception occurred
+     */
+    public static DdsImage read(final ByteBuffer buf) throws IOException {
+        final DdsImage image = new DdsImage();
         image.readFromBuffer(buf);
         return image;
     }
 
-    /** Closes open files and resources associated with the open
-        DDSImage. No other methods may be called on this object once
-        this is called. */
+    /**
+     * Closes open files and resources associated with the open DDSImage. No
+     * other methods may be called on this object once this is called.
+     */
     public void close() {
         try {
             if (chan != null) {
@@ -213,32 +174,32 @@ public class DDSImage {
     }
 
     /**
-     * Creates a new DDSImage from data supplied by the user. The
-     * resulting DDSImage can be written to disk using the write()
-     * method.
+     * Creates a new DDSImage from data supplied by the user. The resulting
+     * DDSImage can be written to disk using the write() method.
      *
-     * @param d3dFormat the D3DFMT_ constant describing the data; it is
-     *                  assumed that it is packed tightly
-     * @param width  the width in pixels of the topmost mipmap image
+     * @param d3dFormat the D3DFMT_ constant describing the data; it is assumed
+     * that it is packed tightly
+     * @param width the width in pixels of the topmost mipmap image
      * @param height the height in pixels of the topmost mipmap image
      * @param mipmapData the data for each mipmap level of the resulting
-     *                   DDSImage; either only one mipmap level should
-     *                   be specified, or they all must be
-     * @throws IllegalArgumentException if the data does not match the
-     *   specified arguments
+     * DDSImage; either only one mipmap level should be specified, or they all
+     * must be
+     * @throws IllegalArgumentException if the data does not match the specified
+     * arguments
      * @return DDS image object
      */
-    public static DDSImage createFromData(final int d3dFormat,
-                                          final int width,
-                                          final int height,
-                                          final ByteBuffer[] mipmapData) throws IllegalArgumentException {
-        final DDSImage image = new DDSImage();
+    public static DdsImage createFromData(final int d3dFormat,
+            final int width,
+            final int height,
+            final ByteBuffer[] mipmapData) throws IllegalArgumentException {
+        final DdsImage image = new DdsImage();
         image.initFromData(d3dFormat, width, height, mipmapData);
         return image;
     }
 
     /**
      * Writes this DDSImage to the specified file name.
+     *
      * @param filename File name to write to
      * @throws java.io.IOException if an I/O exception occurred
      */
@@ -248,6 +209,7 @@ public class DDSImage {
 
     /**
      * Writes this DDSImage to the specified file name.
+     *
      * @param file File object to write to
      * @throws java.io.IOException if an I/O exception occurred
      */
@@ -268,7 +230,9 @@ public class DDSImage {
         stream.close();
     }
 
-    /** Test for presence/absence of surface description flags (DDSD_*)
+    /**
+     * Test for presence/absence of surface description flags (DDSD_*)
+     *
      * @param flag DDSD_* flags set to test
      * @return true if flag present or false otherwise
      */
@@ -276,38 +240,40 @@ public class DDSImage {
         return ((header.flags & flag) != 0);
     }
 
-    /** Test for presence/absence of pixel format flags (DDPF_*) */
+    /**
+     * Test for presence/absence of pixel format flags (DDPF_*)
+     */
     public boolean isPixelFormatFlagSet(final int flag) {
         return ((header.pfFlags & flag) != 0);
     }
 
-    /** Gets the pixel format of this texture (D3DFMT_*) based on some
-        heuristics. Returns D3DFMT_UNKNOWN if could not recognize the
-        pixel format. */
+    /**
+     * Gets the pixel format of this texture (D3DFMT_*) based on some
+     * heuristics. Returns D3DFMT_UNKNOWN if could not recognize the pixel
+     * format.
+     */
     public int getPixelFormat() {
         if (isCompressed()) {
             return getCompressionFormat();
         } else if (isPixelFormatFlagSet(DDPF_RGB)) {
             if (isPixelFormatFlagSet(DDPF_ALPHAPIXELS)) {
-                if (getDepth() == 32 &&
-                    header.pfRBitMask == 0x00FF0000 &&
-                    header.pfGBitMask == 0x0000FF00 &&
-                    header.pfBBitMask == 0x000000FF &&
-                    header.pfABitMask == 0xFF000000) {
+                if (getDepth() == 32
+                        && header.pfRBitMask == 0x00FF0000
+                        && header.pfGBitMask == 0x0000FF00
+                        && header.pfBBitMask == 0x000000FF
+                        && header.pfABitMask == 0xFF000000) {
                     return D3DFMT_A8R8G8B8;
                 }
-            } else {
-                if (getDepth() == 24 &&
-                    header.pfRBitMask == 0x00FF0000 &&
-                    header.pfGBitMask == 0x0000FF00 &&
-                    header.pfBBitMask == 0x000000FF) {
-                    return D3DFMT_R8G8B8;
-                } else if (getDepth() == 32 &&
-                           header.pfRBitMask == 0x00FF0000 &&
-                           header.pfGBitMask == 0x0000FF00 &&
-                           header.pfBBitMask == 0x000000FF) {
-                    return D3DFMT_X8R8G8B8;
-                }
+            } else if (getDepth() == 24
+                    && header.pfRBitMask == 0x00FF0000
+                    && header.pfGBitMask == 0x0000FF00
+                    && header.pfBBitMask == 0x000000FF) {
+                return D3DFMT_R8G8B8;
+            } else if (getDepth() == 32
+                    && header.pfRBitMask == 0x00FF0000
+                    && header.pfGBitMask == 0x0000FF00
+                    && header.pfBBitMask == 0x000000FF) {
+                return D3DFMT_X8R8G8B8;
             }
         }
 
@@ -316,6 +282,7 @@ public class DDSImage {
 
     /**
      * Indicates whether this texture is cubemap
+     *
      * @return true if cubemap or false otherwise
      */
     public boolean isCubemap() {
@@ -324,6 +291,7 @@ public class DDSImage {
 
     /**
      * Indicates whethe this cubemap side present
+     *
      * @param side Side to test
      * @return true if side present or false otherwise
      */
@@ -331,36 +299,46 @@ public class DDSImage {
         return isCubemap() && (header.ddsCaps2 & side) != 0;
     }
 
-    /** Indicates whether this texture is compressed. */
+    /**
+     * Indicates whether this texture is compressed.
+     */
     public boolean isCompressed() {
         return (isPixelFormatFlagSet(DDPF_FOURCC));
     }
 
-    /** If this surface is compressed, returns the kind of compression
-        used (DXT1..DXT5). */
+    /**
+     * If this surface is compressed, returns the kind of compression used
+     * (DXT1..DXT5).
+     */
     public int getCompressionFormat() {
         return header.pfFourCC;
     }
 
-    /** Width of the texture (or the top-most mipmap if mipmaps are
-        present) */
+    /**
+     * Width of the texture (or the top-most mipmap if mipmaps are present)
+     */
     public int getWidth() {
         return header.width;
     }
 
-    /** Height of the texture (or the top-most mipmap if mipmaps are
-        present) */
+    /**
+     * Height of the texture (or the top-most mipmap if mipmaps are present)
+     */
     public int getHeight() {
         return header.height;
     }
 
-    /** Total number of bits per pixel. Only valid if DDPF_RGB is
-        present. For A8R8G8B8, would be 32. */
+    /**
+     * Total number of bits per pixel. Only valid if DDPF_RGB is present. For
+     * A8R8G8B8, would be 32.
+     */
     public int getDepth() {
         return header.pfRGBBitCount;
     }
 
-    /** Number of mip maps in the texture */
+    /**
+     * Number of mip maps in the texture
+     */
     public int getNumMipMaps() {
         if (!isSurfaceDescFlagSet(DDSD_MIPMAPCOUNT)) {
             return 0;
@@ -368,29 +346,32 @@ public class DDSImage {
         return header.mipMapCountOrAux;
     }
 
-    /** Gets the <i>i</i>th mipmap data (0..getNumMipMaps() - 1)
+    /**
+     * Gets the <i>i</i>th mipmap data (0..getNumMipMaps() - 1)
+     *
      * @param map Mipmap index
      * @return Image object
      */
     public ImageInfo getMipMap(final int map) {
-        return getMipMap( 0, map );
+        return getMipMap(0, map);
     }
 
     /**
      * Gets the <i>i</i>th mipmap data (0..getNumMipMaps() - 1)
+     *
      * @param side Cubemap side or 0 for 2D texture
      * @param map Mipmap index
      * @return Image object
      */
     public ImageInfo getMipMap(final int side, final int map) {
         if (!isCubemap() && (side != 0)) {
-            throw new RuntimeException( "Illegal side for 2D texture: " + side );
+            throw new RuntimeException("Illegal side for 2D texture: " + side);
         }
         if (isCubemap() && !isCubemapSidePresent(side)) {
-            throw new RuntimeException( "Illegal side, side not present: " + side );
+            throw new RuntimeException("Illegal side, side not present: " + side);
         }
-        if (getNumMipMaps() > 0 &&
-            ((map < 0) || (map >= getNumMipMaps()))) {
+        if (getNumMipMaps() > 0
+                && ((map < 0) || (map >= getNumMipMaps()))) {
             throw new RuntimeException("Illegal mipmap number " + map + " (0.." + (getNumMipMaps() - 1) + ")");
         }
 
@@ -410,21 +391,24 @@ public class DDSImage {
         return new ImageInfo(next, mipMapWidth(map), mipMapHeight(map), isCompressed(), getCompressionFormat());
     }
 
-    /** Returns an array of ImageInfos corresponding to all mipmap
-        levels of this DDS file.
-        @return Mipmap image objects set
-    */
+    /**
+     * Returns an array of ImageInfos corresponding to all mipmap levels of this
+     * DDS file.
+     *
+     * @return Mipmap image objects set
+     */
     public ImageInfo[] getAllMipMaps() {
         return getAllMipMaps(0);
     }
 
     /**
-     * Returns an array of ImageInfos corresponding to all mipmap
-     * levels of this DDS file.
+     * Returns an array of ImageInfos corresponding to all mipmap levels of this
+     * DDS file.
+     *
      * @param side Cubemap side or 0 for 2D texture
      * @return Mipmap image objects set
      */
-    public ImageInfo[] getAllMipMaps( final int side ) {
+    public ImageInfo[] getAllMipMaps(final int side) {
         int numLevels = getNumMipMaps();
         if (numLevels == 0) {
             numLevels = 1;
@@ -436,11 +420,13 @@ public class DDSImage {
         return result;
     }
 
-    /** Converts e.g. DXT1 compression format constant (see {@link
-        #getCompressionFormat}) into "DXT1".
-        @param compressionFormat Compression format constant
-        @return String format code
-    */
+    /**
+     * Converts e.g. DXT1 compression format constant (see {@link
+     * #getCompressionFormat}) into "DXT1".
+     *
+     * @param compressionFormat Compression format constant
+     * @return String format code
+     */
     public static String getCompressionFormatName(int compressionFormat) {
         final StringBuilder buf = new StringBuilder();
         for (int i = 0; i < 4; i++) {
@@ -451,36 +437,36 @@ public class DDSImage {
         return buf.toString();
     }
 
-    /** Allocates a temporary, empty ByteBuffer suitable for use in a
-        call to glCompressedTexImage2D. This is used by the Texture
-        class to expand non-power-of-two DDS compressed textures to
-        power-of-two sizes on hardware not supporting OpenGL 2.0 and the
-        NPOT texture extension. The specified OpenGL internal format
-        must be one of GL_COMPRESSED_RGB_S3TC_DXT1_EXT,
-        GL_COMPRESSED_RGBA_S3TC_DXT1_EXT,
-        GL_COMPRESSED_RGBA_S3TC_DXT3_EXT, or
-        GL_COMPRESSED_RGBA_S3TC_DXT5_EXT.
-    */
+    /**
+     * Allocates a temporary, empty ByteBuffer suitable for use in a call to
+     * glCompressedTexImage2D. This is used by the Texture class to expand
+     * non-power-of-two DDS compressed textures to power-of-two sizes on
+     * hardware not supporting OpenGL 2.0 and the NPOT texture extension. The
+     * specified OpenGL internal format must be one of
+     * GL_COMPRESSED_RGB_S3TC_DXT1_EXT, GL_COMPRESSED_RGBA_S3TC_DXT1_EXT,
+     * GL_COMPRESSED_RGBA_S3TC_DXT3_EXT, or GL_COMPRESSED_RGBA_S3TC_DXT5_EXT.
+     */
     public static ByteBuffer allocateBlankBuffer(final int width,
-                                                 final int height,
-                                                 final int openGLInternalFormat) {
+            final int height,
+            final int openGLInternalFormat) {
         int size = width * height;
         switch (openGLInternalFormat) {
-        case GL.GL_COMPRESSED_RGB_S3TC_DXT1_EXT:
-        case GL.GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
-            size /= 2;
-            break;
+            case GL.GL_COMPRESSED_RGB_S3TC_DXT1_EXT:
+            case GL.GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
+                size /= 2;
+                break;
 
-        case GL.GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
-        case GL.GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
-            break;
+            case GL.GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
+            case GL.GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
+                break;
 
-        default:
-            throw new IllegalArgumentException("Illegal OpenGL texture internal format " +
-                                               openGLInternalFormat);
+            default:
+                throw new IllegalArgumentException("Illegal OpenGL texture internal format "
+                        + openGLInternalFormat);
         }
-        if (size == 0)
+        if (size == 0) {
             size = 1;
+        }
         return Buffers.newDirectByteBuffer(size);
     }
 
@@ -540,26 +526,46 @@ public class DDSImage {
         final int fmt = getPixelFormat();
         tty.print("Pixel format: ");
         switch (fmt) {
-        case D3DFMT_R8G8B8:   tty.println("D3DFMT_R8G8B8"); break;
-        case D3DFMT_A8R8G8B8: tty.println("D3DFMT_A8R8G8B8"); break;
-        case D3DFMT_X8R8G8B8: tty.println("D3DFMT_X8R8G8B8"); break;
-        case D3DFMT_DXT1:     tty.println("D3DFMT_DXT1"); break;
-        case D3DFMT_DXT2:     tty.println("D3DFMT_DXT2"); break;
-        case D3DFMT_DXT3:     tty.println("D3DFMT_DXT3"); break;
-        case D3DFMT_DXT4:     tty.println("D3DFMT_DXT4"); break;
-        case D3DFMT_DXT5:     tty.println("D3DFMT_DXT5"); break;
-        case D3DFMT_UNKNOWN:  tty.println("D3DFMT_UNKNOWN"); break;
-        default:              tty.println("(unknown pixel format " + fmt + ")"); break;
+            case D3DFMT_R8G8B8:
+                tty.println("D3DFMT_R8G8B8");
+                break;
+            case D3DFMT_A8R8G8B8:
+                tty.println("D3DFMT_A8R8G8B8");
+                break;
+            case D3DFMT_X8R8G8B8:
+                tty.println("D3DFMT_X8R8G8B8");
+                break;
+            case D3DFMT_DXT1:
+                tty.println("D3DFMT_DXT1");
+                break;
+            case D3DFMT_DXT2:
+                tty.println("D3DFMT_DXT2");
+                break;
+            case D3DFMT_DXT3:
+                tty.println("D3DFMT_DXT3");
+                break;
+            case D3DFMT_DXT4:
+                tty.println("D3DFMT_DXT4");
+                break;
+            case D3DFMT_DXT5:
+                tty.println("D3DFMT_DXT5");
+                break;
+            case D3DFMT_UNKNOWN:
+                tty.println("D3DFMT_UNKNOWN");
+                break;
+            default:
+                tty.println("(unknown pixel format " + fmt + ")");
+                break;
         }
     }
 
     //----------------------------------------------------------------------
     // Internals only below this point
     //
-
     private static final int MAGIC = 0x20534444;
 
     static class Header {
+
         int size;                 // size of the DDSURFACEDESC structure
         int flags;                // determines what fields are valid
         int height;               // height of surface to be created
@@ -600,44 +606,44 @@ public class DDSImage {
         int textureStage;           // stage in multitexture cascade
 
         void read(final ByteBuffer buf) throws IOException {
-            final int magic                     = buf.getInt();
+            final int magic = buf.getInt();
             if (magic != MAGIC) {
-                throw new IOException("Incorrect magic number 0x" +
-                                      Integer.toHexString(magic) +
-                                      " (expected " + MAGIC + ")");
+                throw new IOException("Incorrect magic number 0x"
+                        + Integer.toHexString(magic)
+                        + " (expected " + MAGIC + ")");
             }
 
-            size                          = buf.getInt();
-            flags                         = buf.getInt();
-            height                        = buf.getInt();
-            width                         = buf.getInt();
-            pitchOrLinearSize             = buf.getInt();
-            backBufferCountOrDepth        = buf.getInt();
-            mipMapCountOrAux              = buf.getInt();
-            alphaBitDepth                 = buf.getInt();
-            reserved1                     = buf.getInt();
-            surface                       = buf.getInt();
-            colorSpaceLowValue            = buf.getInt();
-            colorSpaceHighValue           = buf.getInt();
-            destBltColorSpaceLowValue     = buf.getInt();
-            destBltColorSpaceHighValue    = buf.getInt();
-            srcOverlayColorSpaceLowValue  = buf.getInt();
+            size = buf.getInt();
+            flags = buf.getInt();
+            height = buf.getInt();
+            width = buf.getInt();
+            pitchOrLinearSize = buf.getInt();
+            backBufferCountOrDepth = buf.getInt();
+            mipMapCountOrAux = buf.getInt();
+            alphaBitDepth = buf.getInt();
+            reserved1 = buf.getInt();
+            surface = buf.getInt();
+            colorSpaceLowValue = buf.getInt();
+            colorSpaceHighValue = buf.getInt();
+            destBltColorSpaceLowValue = buf.getInt();
+            destBltColorSpaceHighValue = buf.getInt();
+            srcOverlayColorSpaceLowValue = buf.getInt();
             srcOverlayColorSpaceHighValue = buf.getInt();
-            srcBltColorSpaceLowValue      = buf.getInt();
-            srcBltColorSpaceHighValue     = buf.getInt();
-            pfSize                        = buf.getInt();
-            pfFlags                       = buf.getInt();
-            pfFourCC                      = buf.getInt();
-            pfRGBBitCount                 = buf.getInt();
-            pfRBitMask                    = buf.getInt();
-            pfGBitMask                    = buf.getInt();
-            pfBBitMask                    = buf.getInt();
-            pfABitMask                    = buf.getInt();
-            ddsCaps1                      = buf.getInt();
-            ddsCaps2                      = buf.getInt();
-            ddsCapsReserved1              = buf.getInt();
-            ddsCapsReserved2              = buf.getInt();
-            textureStage                  = buf.getInt();
+            srcBltColorSpaceLowValue = buf.getInt();
+            srcBltColorSpaceHighValue = buf.getInt();
+            pfSize = buf.getInt();
+            pfFlags = buf.getInt();
+            pfFourCC = buf.getInt();
+            pfRGBBitCount = buf.getInt();
+            pfRBitMask = buf.getInt();
+            pfGBitMask = buf.getInt();
+            pfBBitMask = buf.getInt();
+            pfABitMask = buf.getInt();
+            ddsCaps1 = buf.getInt();
+            ddsCaps2 = buf.getInt();
+            ddsCapsReserved1 = buf.getInt();
+            ddsCapsReserved2 = buf.getInt();
+            textureStage = buf.getInt();
         }
 
         // buf must be in little-endian byte order
@@ -689,49 +695,146 @@ public class DDSImage {
         }
     }
 
-    private DDSImage() {
+    private DdsImage() {
     }
 
     private void readFromFile(final File file) throws IOException {
         fis = new FileInputStream(file);
         chan = fis.getChannel();
         final ByteBuffer buf = chan.map(FileChannel.MapMode.READ_ONLY,
-                                  0, (int) file.length());
+                0, (int) file.length());
         readFromBuffer(buf);
     }
 
     private void readFromBuffer(final ByteBuffer buf) throws IOException {
-        this.buf = buf;
+
         buf.order(ByteOrder.LITTLE_ENDIAN);
-        header = new Header();
-        header.read(buf);
-        fixupHeader();
+        this.buf = buf;
+
+        if (!(buf.capacity() >= DdsHeader.SIZEOF)) {
+            throw new Error("Data size smaller than dds header size");
+        }
+
+        header = new DdsHeader(buf);
+
+        int offset = DdsHeader.SIZEOF;
+
+        header10 = new DdsHeader10();
+
+        if ((header.format.flags & DDPF_FOURCC.value) != 0 && header.format.fourCC == D3DFMT_DX10) {
+
+            header10 = new DdsHeader10(buf);
+            offset += DdsHeader10.sizeOf;
+        }
+
+        int format = GL_INVALID_VALUE;
+
+        if (((header.format.flags & (DDPF_RGB.value | DDPF_ALPHAPIXELS.value | DDPF_ALPHA.value
+                | DDPF_YUV.value | DDPF_LUMINANCE.value))) != 0 && format == GL_INVALID_VALUE
+                && header.format.flags != DDPF_FOURCC_ALPHAPIXELS.value) {
+
+            switch (header.format.bpp) {
+
+                case 8:
+
+                    if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_L8_UNORM).mask))) {
+                        format = FORMAT_L8_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_A8_UNORM).mask))) {
+                        format = FORMAT_A8_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_R8_UNORM).mask))) {
+                        format = FORMAT_R8_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_RG3B2_UNORM).mask))) {
+                        format = FORMAT_RG3B2_UNORM;
+                    }
+                    break;
+
+                case 16:
+
+                    if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_LA8_UNORM).mask))) {
+                        format = FORMAT_LA8_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_RG8_UNORM).mask))) {
+                        format = FORMAT_RG8_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_R5G6B5_UNORM).mask))) {
+                        format = FORMAT_R5G6B5_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_L16_UNORM).mask))) {
+                        format = FORMAT_L16_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_A16_UNORM).mask))) {
+                        format = FORMAT_A16_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_R16_UNORM).mask))) {
+                        format = FORMAT_R16_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_RGB5A1_UNORM).mask))) {
+                        format = FORMAT_RGB5A1_UNORM;
+                    }
+                    break;
+
+                case 24:
+
+                    Dx.Format dxFormat = dx.translate(FORMAT_RGB8_UNORM);
+                    if (Glm.all(Glm.equal(header.format.mask, dxFormat.mask))) {
+                        format = FORMAT_RGB8_UNORM;
+                    }
+                    break;
+
+                case 32:
+
+                    if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_BGRX8_UNORM).mask))) {
+                        format = FORMAT_BGRX8_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_BGRA8_UNORM).mask))) {
+                        format = FORMAT_BGRA8_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_RGBA8_UNORM).mask))) {
+                        format = FORMAT_RGBA8_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_RGB10A2_UNORM).mask))) {
+                        format = FORMAT_RGB10A2_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_LA16_UNORM).mask))) {
+                        format = FORMAT_LA16_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_RG16_UNORM).mask))) {
+                        format = FORMAT_RG16_UNORM;
+                    } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_R32_SFLOAT).mask))) {
+                        format = FORMAT_R32_SFLOAT;
+                    }
+                    break;
+            }
+        } else if (((header.format.flags & DDPF_FOURCC.value) != 0) && (header.format.fourCC != D3DFMT_DX10)
+                && (format == FORMAT_INVALID)) {
+            format = dx.find(header.format.fourCC);
+        } else if ((header.format.fourCC == D3DFMT_DX10) && (header10.format != DXGI_FORMAT_UNKNOWN)) {
+            format = dx.find(header10.format);
+        }
     }
 
     private void initFromData(final int d3dFormat,
-                              final int width,
-                              final int height,
-                              final ByteBuffer[] mipmapData) throws IllegalArgumentException {
+            final int width,
+            final int height,
+            final ByteBuffer[] mipmapData) throws IllegalArgumentException {
         // Check size of mipmap data compared against format, width and
         // height
         int topmostMipmapSize = width * height;
         int pitchOrLinearSize = width;
         boolean isCompressed = false;
         switch (d3dFormat) {
-        case D3DFMT_R8G8B8:   topmostMipmapSize *= 3; pitchOrLinearSize *= 3; break;
-        case D3DFMT_A8R8G8B8: topmostMipmapSize *= 4; pitchOrLinearSize *= 4; break;
-        case D3DFMT_X8R8G8B8: topmostMipmapSize *= 4; pitchOrLinearSize *= 4; break;
-        case D3DFMT_DXT1:
-        case D3DFMT_DXT2:
-        case D3DFMT_DXT3:
-        case D3DFMT_DXT4:
-        case D3DFMT_DXT5:
-            topmostMipmapSize = computeCompressedBlockSize(width, height, 1, d3dFormat);
-            pitchOrLinearSize = topmostMipmapSize;
-            isCompressed = true;
-            break;
-        default:
-            throw new IllegalArgumentException("d3dFormat must be one of the known formats");
+            case D3DFMT_R8G8B8:
+                topmostMipmapSize *= 3;
+                pitchOrLinearSize *= 3;
+                break;
+            case D3DFMT_A8R8G8B8:
+                topmostMipmapSize *= 4;
+                pitchOrLinearSize *= 4;
+                break;
+            case D3DFMT_X8R8G8B8:
+                topmostMipmapSize *= 4;
+                pitchOrLinearSize *= 4;
+                break;
+            case D3DFMT_DXT1:
+            case D3DFMT_DXT2:
+            case D3DFMT_DXT3:
+            case D3DFMT_DXT4:
+            case D3DFMT_DXT5:
+                topmostMipmapSize = computeCompressedBlockSize(width, height, 1, d3dFormat);
+                pitchOrLinearSize = topmostMipmapSize;
+                isCompressed = true;
+                break;
+            default:
+                throw new IllegalArgumentException("d3dFormat must be one of the known formats");
         }
 
         // Now check the mipmaps against this size
@@ -741,13 +844,17 @@ public class DDSImage {
         int totalSize = 0;
         for (int i = 0; i < mipmapData.length; i++) {
             if (mipmapData[i].remaining() != curSize) {
-                throw new IllegalArgumentException("Mipmap level " + i +
-                                                   " didn't match expected data size (expected " + curSize + ", got " +
-                                                   mipmapData[i].remaining() + ")");
+                throw new IllegalArgumentException("Mipmap level " + i
+                        + " didn't match expected data size (expected " + curSize + ", got "
+                        + mipmapData[i].remaining() + ")");
             }
             // Compute next mipmap size
-            if (mipmapWidth > 1) mipmapWidth /= 2;
-            if (mipmapHeight > 1) mipmapHeight /= 2;
+            if (mipmapWidth > 1) {
+                mipmapWidth /= 2;
+            }
+            if (mipmapHeight > 1) {
+                mipmapHeight /= 2;
+            }
             curSize = computeBlockSize(mipmapWidth, mipmapHeight, 1, d3dFormat);
             totalSize += mipmapData[i].remaining();
         }
@@ -780,9 +887,16 @@ public class DDSImage {
             // Figure out the various settings from the pixel format
             header.pfFlags |= DDPF_RGB;
             switch (d3dFormat) {
-            case D3DFMT_R8G8B8:   header.pfRGBBitCount = 24; break;
-            case D3DFMT_A8R8G8B8: header.pfRGBBitCount = 32; header.pfFlags |= DDPF_ALPHAPIXELS; break;
-            case D3DFMT_X8R8G8B8: header.pfRGBBitCount = 32; break;
+                case D3DFMT_R8G8B8:
+                    header.pfRGBBitCount = 24;
+                    break;
+                case D3DFMT_A8R8G8B8:
+                    header.pfRGBBitCount = 32;
+                    header.pfFlags |= DDPF_ALPHAPIXELS;
+                    break;
+                case D3DFMT_X8R8G8B8:
+                    header.pfRGBBitCount = 32;
+                    break;
             }
             header.pfRBitMask = 0x00FF0000;
             header.pfGBitMask = 0x0000FF00;
@@ -797,58 +911,44 @@ public class DDSImage {
         // header blank
     }
 
-    // Microsoft doesn't follow their own specifications and the
-    // simplest conversion using the DxTex tool to e.g. a DXT3 texture
-    // results in an illegal .dds file without either DDSD_PITCH or
-    // DDSD_LINEARSIZE set in the header's flags. This code, adapted
-    // from the DevIL library, fixes up the header in these situations.
-    private void fixupHeader() {
-        if (isCompressed() && !isSurfaceDescFlagSet(DDSD_LINEARSIZE)) {
-            // Figure out how big the linear size should be
-            int depth = header.backBufferCountOrDepth;
-            if (depth == 0) {
-                depth = 1;
-            }
-
-            header.pitchOrLinearSize = computeCompressedBlockSize(getWidth(), getHeight(), depth, getCompressionFormat());
-            header.flags |= DDSD_LINEARSIZE;
-        }
-    }
-
     private static int computeCompressedBlockSize(final int width,
-                                                  final int height,
-                                                  final int depth,
-                                                  final int compressionFormat) {
-        int blockSize = ((width + 3)/4) * ((height + 3)/4) * ((depth + 3)/4);
+            final int height,
+            final int depth,
+            final int compressionFormat) {
+        int blockSize = ((width + 3) / 4) * ((height + 3) / 4) * ((depth + 3) / 4);
         switch (compressionFormat) {
-        case D3DFMT_DXT1:  blockSize *=  8; break;
-        default:           blockSize *= 16; break;
+            case D3DFMT_DXT1:
+                blockSize *= 8;
+                break;
+            default:
+                blockSize *= 16;
+                break;
         }
         return blockSize;
     }
 
     private static int computeBlockSize(final int width,
-                                        final int height,
-                                        final int depth,
-                                        final int pixelFormat) {
+            final int height,
+            final int depth,
+            final int pixelFormat) {
         int blocksize;
         switch (pixelFormat) {
-        case D3DFMT_R8G8B8:
-            blocksize = width*height*3;
-            break;
-        case D3DFMT_A8R8G8B8:
-        case D3DFMT_X8R8G8B8:
-            blocksize = width*height*4;
-            break;
-        case D3DFMT_DXT1:
-        case D3DFMT_DXT2:
-        case D3DFMT_DXT3:
-        case D3DFMT_DXT4:
-        case D3DFMT_DXT5:
-            blocksize = computeCompressedBlockSize(width, height, 1, pixelFormat);
-            break;
-        default:
-            throw new IllegalArgumentException("d3dFormat must be one of the known formats");
+            case D3DFMT_R8G8B8:
+                blocksize = width * height * 3;
+                break;
+            case D3DFMT_A8R8G8B8:
+            case D3DFMT_X8R8G8B8:
+                blocksize = width * height * 4;
+                break;
+            case D3DFMT_DXT1:
+            case D3DFMT_DXT2:
+            case D3DFMT_DXT3:
+            case D3DFMT_DXT4:
+            case D3DFMT_DXT5:
+                blocksize = computeCompressedBlockSize(width, height, 1, pixelFormat);
+                break;
+            default:
+                throw new IllegalArgumentException("d3dFormat must be one of the known formats");
         }
         return blocksize;
     }
@@ -870,11 +970,11 @@ public class DDSImage {
     }
 
     private int mipMapSizeInBytes(final int map) {
-        final int width  = mipMapWidth(map);
+        final int width = mipMapWidth(map);
         final int height = mipMapHeight(map);
         if (isCompressed()) {
             final int blockSize = (getCompressionFormat() == D3DFMT_DXT1 ? 8 : 16);
-            return ((width+3)/4)*((height+3)/4)*blockSize;
+            return ((width + 3) / 4) * ((height + 3) / 4) * blockSize;
         } else {
             return width * height * (getDepth() / 8);
         }

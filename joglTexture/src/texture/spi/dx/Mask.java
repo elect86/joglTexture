@@ -3,24 +3,18 @@
  * To change this template file, choose Tools | Templates
  * and open the template in the editor.
  */
-package texture;
-
-import com.jogamp.opengl.GL;
+package texture.spi.dx;
 
 /**
  *
  * @author elect
  */
-public class Resources {
+public class Mask {
 
-    public enum Format {
-
-        GL_R8(GL.GL_R8);
-
-        public final int value;
-
-        private Format(int value) {
-            this.value = value;
+    public static int get(int glFormat) {
+        
+        switch (glFormat) 
+            
+            case 
         }
     }
-}
