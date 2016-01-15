@@ -51,6 +51,9 @@ import com.jogamp.opengl.GL;
 import com.jogamp.common.nio.Buffers;
 import com.jogamp.common.util.IOUtil;
 import static com.jogamp.opengl.GL.GL_INVALID_VALUE;
+import com.jogamp.opengl.GL2ES2;
+import math.IntUtil;
+import texture.FormatInfo;
 import static texture.spi.dx.D3dFormat.D3DFMT_DX10;
 import static texture.spi.dx.Ddpf.*;
 
@@ -728,6 +731,7 @@ public class DdsImage {
         }
 
         int format = GL_INVALID_VALUE;
+        FormatInfo formatInfo = new FormatInfo();
 
         if (((header.format.flags & (DDPF_RGB.value | DDPF_ALPHAPIXELS.value | DDPF_ALPHA.value
                 | DDPF_YUV.value | DDPF_LUMINANCE.value))) != 0 && format == GL_INVALID_VALUE
@@ -737,7 +741,19 @@ public class DdsImage {
 
                 case 8:
 
-                    if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_L8_UNORM).mask))) {
+                    if (IntUtil.equal(header.format.mask, 
+                            new int[]{0x000000FF, 0x00000000, 0x00000000, 0x00000000})) {
+                        formatInfo.internal=GL.GL_R8;
+                        formatInfo.external=GL2ES2.GL_RED;
+                        formatInfo.type=GL.GL_UNSIGNED_BYTE;
+                        formatInfo.blockSize=1;
+                        formatInfo.blockDimensions=new short[]{1,1,1};
+                        formatInfo.component=1;
+                        formatInfo.swizzles=new int[]{GL.GL_ONE, GL.GL_ZERO,GL.GL_ZERO,GL.GL_ZERO};
+                        formatInfo.flags=(short) (FormatInfo.Cap.CAP_NORMALIZED_BIT.value | 
+                                FormatInfo.Cap.CAP_UNSIGNED_BIT.value
+                                | FormatInfo.Cap.CAP_LUMINANCE_ALPHA_BIT.value);
+                    }
                         format = FORMAT_L8_UNORM;
                     } else if (Glm.all(Glm.equal(header.format.mask, dx.translate(FORMAT_A8_UNORM).mask))) {
                         format = FORMAT_A8_UNORM;

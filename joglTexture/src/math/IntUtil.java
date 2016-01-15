@@ -11,4 +11,15 @@ package math;
  */
 public class IntUtil {
 
+    public static boolean equal(int[] a, int[] b) {
+
+        if (a.length != b.length) {
+            return false;
+        }
+        boolean equal = true;
+        for (int i = 0; i < a.length; i++) {
+            equal = equal && a[i] == b[i];
+        }
+        return equal;
+    }
 }
